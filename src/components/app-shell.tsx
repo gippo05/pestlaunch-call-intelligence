@@ -16,7 +16,7 @@ export function AppShell({ identity, children }: { identity: AuthenticatedIdenti
               <span className="block text-[11px] text-muted">Call Intelligence</span>
             </span>
           </Link>
-          <span className="rounded-full border border-line px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted">Private M1</span>
+          <span className="rounded-full border border-line px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.13em] text-muted">Private M2</span>
         </div>
         <div className="mt-7 md:mt-10">
           <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Workspace</p>
@@ -46,7 +46,7 @@ export function AppShell({ identity, children }: { identity: AuthenticatedIdenti
         <div className="w-full flex-1 px-5 py-8 sm:px-8 sm:py-10 lg:px-12">
           <div className="mx-auto w-full max-w-6xl">{children}</div>
         </div>
-        <footer className="border-t border-line px-5 py-4 text-center text-[11px] text-muted sm:px-8">Private assessment workspace · No customer audio is processed in M1</footer>
+        <footer className="border-t border-line px-5 py-4 text-center text-[11px] text-muted sm:px-8">Private assessment workspace · Synthetic MP3 intake only · AI analysis is not enabled</footer>
       </div>
     </div>
   );

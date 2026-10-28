@@ -25,6 +25,24 @@ describe("parsePublicEnv", () => {
     ).toThrow("Supabase public configuration is invalid.");
   });
 
+  it("permits HTTP only for an explicitly enabled isolated local development stack", () => {
+    const local = {
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321",
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: validEnvironment.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+      NEXT_PUBLIC_ALLOW_LOCAL_SUPABASE_HTTP: "true",
+    };
+    expect(parsePublicEnv({ ...local, NODE_ENV: "development" })).toEqual({
+      supabaseUrl: "http://127.0.0.1:54321",
+      publishableKey: validEnvironment.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    });
+    expect(() => parsePublicEnv({ ...local, NODE_ENV: "production" })).toThrow(
+      "Supabase public configuration is invalid.",
+    );
+    expect(() => parsePublicEnv({ ...local, NODE_ENV: "development", NEXT_PUBLIC_SUPABASE_URL: "http://localhost:54321" })).toThrow(
+      "Supabase public configuration is invalid.",
+    );
+  });
+
   it("rejects non-HTTPS URLs and non-publishable keys", () => {
     expect(() =>
       parsePublicEnv({

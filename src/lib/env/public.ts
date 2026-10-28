@@ -22,8 +22,15 @@ export function parsePublicEnv(environment: PublicEnvironment): PublicSupabaseCo
     throw new Error(INVALID_PUBLIC_CONFIG);
   }
 
+  const allowIsolatedLocalHttp =
+    environment.NODE_ENV === "development" &&
+    environment.NEXT_PUBLIC_ALLOW_LOCAL_SUPABASE_HTTP === "true" &&
+    parsedUrl.protocol === "http:" &&
+    parsedUrl.hostname === "127.0.0.1" &&
+    parsedUrl.port === "54321";
+
   if (
-    parsedUrl.protocol !== "https:" ||
+    (parsedUrl.protocol !== "https:" && !allowIsolatedLocalHttp) ||
     parsedUrl.username ||
     parsedUrl.password ||
     parsedUrl.search ||
@@ -40,5 +47,7 @@ export function getPublicSupabaseConfig(): PublicSupabaseConfig {
   return parsePublicEnv({
     NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+    NEXT_PUBLIC_ALLOW_LOCAL_SUPABASE_HTTP: process.env.NEXT_PUBLIC_ALLOW_LOCAL_SUPABASE_HTTP,
+    NODE_ENV: process.env.NODE_ENV,
   });
 }

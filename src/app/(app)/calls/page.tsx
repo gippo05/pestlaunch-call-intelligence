@@ -1,7 +1,8 @@
-import { Headphones, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Headphones } from "lucide-react";
+import { UploadCallForm } from "@/components/calls/upload-call-form";
 import { requireUser } from "@/lib/auth/session";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { getCallStatusLabel } from "@/lib/calls/status";
 
 type CallRow = {
   id: string;
@@ -32,12 +33,12 @@ export default async function CallsPage() {
             Review call records and their processing status in your assessment workspace.
           </p>
         </div>
-        <Button disabled aria-label="Call upload will be available in a later milestone">
-          <Plus aria-hidden="true" />
+        <a href="#add-call" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-white transition-colors hover:bg-stone-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 focus-visible:ring-offset-2">
           Add a call
-          <span className="ml-1 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide">Later</span>
-        </Button>
+        </a>
       </div>
+
+      <UploadCallForm />
 
       {error ? (
         <section className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-900" role="status">
@@ -50,7 +51,7 @@ export default async function CallsPage() {
           </div>
           <h2 className="mt-5 text-lg font-semibold text-ink">No calls in this workspace yet</h2>
           <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted">
-            Call intake is planned for a later milestone. This view will list recordings after that workflow is authorized and available.
+            Upload a synthetic MP3 to create a private call record. Transcription and scoring are not enabled yet.
           </p>
           <p className="mt-6 text-xs font-medium uppercase tracking-[0.14em] text-muted">Nothing has been uploaded or analyzed</p>
         </section>
@@ -64,7 +65,7 @@ export default async function CallsPage() {
               <li key={call.id} className="grid grid-cols-1 gap-1 px-5 py-4 text-sm sm:grid-cols-[minmax(0,1.8fr)_minmax(8rem,1fr)_minmax(8rem,1fr)] sm:gap-4">
                 <span className="truncate font-medium text-ink">{call.original_filename}</span>
                 <span className="capitalize text-muted">{call.brand.replaceAll("_", " ")} · {call.call_type?.replaceAll("_", " ") ?? "Unclassified"}</span>
-                <span className="capitalize text-muted">{call.status.replaceAll("_", " ")}</span>
+                <span className="capitalize text-muted">{getCallStatusLabel(call.status)}</span>
               </li>
             ))}
           </ul>
