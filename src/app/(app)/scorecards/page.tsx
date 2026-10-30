@@ -36,6 +36,15 @@ type ProvisionalAssessmentRow = {
   call_analyses: ProvisionalAnalysisRow | ProvisionalAnalysisRow[] | null;
 };
 
+type AiAssessmentRow = {
+  analysis_id: string;
+  status: string;
+  calculation: unknown;
+  error_code: string | null;
+  updated_at: string;
+  call_analyses: ProvisionalAnalysisRow | ProvisionalAnalysisRow[] | null;
+};
+
 type ReviewerDraftRow = {
   analysis_id: string;
   observations: unknown;
@@ -99,6 +108,10 @@ export default async function ScorecardsPage() {
     .order("created_at", { ascending: false })
     .limit(100);
   const provisionalAssessments = (provisionalResult.data ?? []) as unknown as ProvisionalAssessmentRow[];
+  const aiResult = await db.from("m4_ai_assessments")
+    .select("analysis_id,status,calculation,error_code,updated_at,call_analyses!inner(id,call_id,review_status,calls!inner(id,original_filename,brand,call_type))")
+    .order("updated_at", { ascending: false }).limit(100);
+  const aiAssessments = (aiResult.data ?? []) as unknown as AiAssessmentRow[];
   const reviewerResult = await db.from("m4_review_worksheets")
     .select("analysis_id,observations,whole_call_reviewed,objection_state,updated_at,call_analyses!inner(id,transcript,calls!inner(id,original_filename,brand,call_type))")
     .order("updated_at", { ascending: false }).limit(50);
@@ -128,6 +141,34 @@ export default async function ScorecardsPage() {
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink">Scorecards</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">Persisted M4 results for calls in your authorized workspace. Official grades appear only when the database rubric is owner-approved and review requirements pass.</p>
       </div>
+
+      {aiAssessments.length > 0 && (
+        <section className="space-y-3" aria-label="Automatic AI provisional scores">
+          <h2 className="text-lg font-semibold text-ink">Automatic AI assessments · Provisional</h2>
+          <p className="text-sm text-muted">AI-generated first-pass points and evidence, not official grades. Unassessed criteria are not failures.</p>
+          {aiAssessments.map((assessment) => {
+            const analysis = one(assessment.call_analyses);
+            const call = analysis ? one(analysis.calls) : null;
+            const calculation = recordValue(assessment.calculation);
+            const points = typeof calculation.provisionalPoints === "number" ? calculation.provisionalPoints : null;
+            const assessed = typeof calculation.assessedCriteria === "number" ? calculation.assessedCriteria : null;
+            const max = typeof calculation.maxPoints === "number" ? calculation.maxPoints : null;
+            return <article key={assessment.analysis_id} className="rounded-xl border border-blue-200 bg-white p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>{call ? <Link href={`/calls/${call.id}`} className="font-semibold text-ink underline-offset-4 hover:underline">{safeFilename(call.original_filename)}</Link> : <p className="font-semibold text-ink">Call reference unavailable</p>}
+                  <p className="mt-1 text-xs text-muted">Automated M4 · {assessment.status.replaceAll("_"," ")} · {formatCallDate(assessment.updated_at)}</p>
+                </div>
+                <span className="rounded-md bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-950">
+                  {points !== null && assessed !== null && max !== null ?
+                    `${points} tentative points · ${assessed}/${max} assessed` :
+                    assessment.status === "failed" ? "AI scoring unavailable" : "AI scoring in progress"}
+                </span>
+              </div>
+              <p className="mt-2 text-xs text-muted">Provisional only. Open the call for criterion-by-criterion transcript evidence.</p>
+            </article>;
+          })}
+        </section>
+      )}
 
       {reviewerDrafts.length > 0 && (
         <section className="space-y-3" aria-label="Reviewer QA worksheets">
@@ -167,9 +208,9 @@ export default async function ScorecardsPage() {
                     {call ? <Link href={`/calls/${call.id}`} className="mt-1 block break-words text-base font-semibold text-ink underline-offset-4 hover:text-blue-800 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700">{safeFilename(call.original_filename)}</Link> : <p className="mt-1 text-base font-semibold text-ink">Call reference unavailable</p>}
                     <p className="mt-1 text-xs text-muted">Analysis {analysis?.review_status.replaceAll("_", " ") ?? "unavailable"} · Engine v{typeof calculation.scoringEngineVersion === "number" ? calculation.scoringEngineVersion : "unknown"} · Saved {formatCallDate(assessment.created_at)}</p>
                   </div>
-                  <span className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-950">0/{criterionCount || "—"} assessed · Grade withheld</span>
+                  <span className="rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-950">Unreviewed baseline · Grade withheld</span>
                 </div>
-                <p className="mt-3 text-sm leading-6 text-muted">The original AI-only candidate contains no validated criterion decisions. It is not a 0-point employee grade; see any reviewer worksheet above.</p>
+                <p className="mt-3 text-sm leading-6 text-muted">This legacy safety placeholder contains no reviewer-validated criterion decisions. It is not a zero-point employee grade; see the automated AI assessment above, if available.</p>
               </article>
             );
           })}
