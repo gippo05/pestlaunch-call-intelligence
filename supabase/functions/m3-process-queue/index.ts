@@ -214,6 +214,20 @@ const m3ProcessQueue = {
         if (error) throw new Error("M3_COMPLETION_FAILED");
         if (data === true) {
           await persistProvisionalAssessment(job.call_id, job.workspace_id);
+          // Separate M4 worker: dispatch only after M3 has committed its transcript.
+          // Do not retroactively fail M3 if the independent AI score is unavailable.
+          try {
+            const { data: analysisRow } = await admin.from("call_analyses")
+              .select("id").eq("call_id", job.call_id).eq("version", 1).maybeSingle();
+            if (analysisRow?.id) {
+              const { error: m4Error } = await admin.functions.invoke("m4-ai-score", {
+                body: { analysis_id: analysisRow.id },
+              });
+              logProvisionalAssessment(m4Error ? "ai_dispatch_failed" : "ai_dispatch_accepted");
+            }
+          } catch {
+            logProvisionalAssessment("ai_dispatch_failed");
+          }
         }
         return data === true;
       },
