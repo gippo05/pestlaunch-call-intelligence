@@ -6,6 +6,7 @@ import { CallProcessingRefresh } from "@/components/calls/call-processing-refres
 import { TranscriptViewer } from "@/components/calls/transcript-viewer";
 import { Button } from "@/components/ui/button";
 import { M4ReviewerWorksheet } from "@/components/calls/m4-reviewer-worksheet";
+import { M4AutomatedAssessment, type M4AiAssessmentRow } from "@/components/calls/m4-automated-assessment";
 import { DEFAULT_RUBRIC_REGISTRY } from "@/lib/scoring/rubrics";
 import { deriveM4AutoSuggestions } from "@/lib/scoring/m4-auto-suggestions";
 import { parseWorksheetInput, type ReviewWorksheetInput } from "@/lib/scoring/review-worksheet";
@@ -192,6 +193,15 @@ export default async function CallDetailPage({ params }: { params: Promise<{ cal
     provisionalAssessment = provisionalResult.data as ProvisionalAssessmentRow | null;
   }
 
+  // Independent automated first-pass grading; never overrides official scores or human QA notes.
+  let m4AiAssessment: M4AiAssessmentRow | null = null;
+  if (analysis) {
+    const { data: aiAssessment } = await db.from("m4_ai_assessments")
+      .select("status,calculation,error_code,updated_at")
+      .eq("analysis_id", analysis.id).maybeSingle();
+    m4AiAssessment = aiAssessment as M4AiAssessmentRow | null;
+  }
+
   let scoreRow: ScoreRow | null = null;
   let scoreLookupUnavailable = false;
   if (analysis) {
@@ -368,7 +378,11 @@ export default async function CallDetailPage({ params }: { params: Promise<{ cal
         <CandidateList title="AI-extracted concern candidates" emptyLabel="No concern candidates were saved." items={concernLocations} />
       </section>
 
-      <ScorecardSection score={summary} scoring={scoring} scoreLookupUnavailable={scoreLookupUnavailable} rubricLookupUnavailable={rubricLookupUnavailable} callType={call.call_type} rubric={rubric} locations={m4Locations} />
+      <M4AutomatedAssessment callId={call.id}
+        analysisReady={Boolean(analysis?.transcript && selectedDraftRubric && call.status === "review_required")}
+        allowedToDispatch={mayEditWorksheet} assessment={m4AiAssessment} />
+      {(scoring.official || !analysis || !selectedDraftRubric) &&
+        <ScorecardSection score={summary} scoring={scoring} scoreLookupUnavailable={scoreLookupUnavailable} rubricLookupUnavailable={rubricLookupUnavailable} callType={call.call_type} rubric={rubric} locations={m4Locations} />}
       {analysis?.transcript && selectedDraftRubric && (
         <section className="rounded-xl border border-line bg-white p-5 sm:p-6" aria-labelledby="m4-auto-heading">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-blue-800">M4 · Automatic pre-assessment</p>
