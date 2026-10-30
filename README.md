@@ -1,59 +1,107 @@
 # PestLaunch Call Intelligence
 
-PestLaunch is a private call-review MVP built with Next.js, Supabase, and a bounded Gemini transcription worker. Local M1–M5 foundations include authenticated uploads, exact-hash synthetic fixture gating, transcript and outcome review, deterministic scorecard gates, and a call library. Hosted deployment and real customer audio are outside this local delivery.
+A small AI-powered call review application built for the PestLaunch engineering challenge.
+
+The goal is to help a business owner review customer conversations without having to listen to every recording from start to finish. The app organizes calls, transcribes conversations, extracts important details, and gives reviewers a starting point for evaluating call handling.
+
+> **Demo data:** I used synthetic recordings only. Although real customer calls were provided for the assessment, I chose to avoid using personal customer information during development and demonstration.
+
+## What the app does
+
+- **Private call uploads:** Signed-in reviewers can upload MP3 recordings and see their processing status in a call library.
+- **AI transcription and analysis:** When processing is configured, Gemini produces a transcript, speaker suggestions, call classification, customer concerns, key facts, and an outcome summary.
+- **Evidence-based review:** Extracted details can be checked against the saved transcript rather than treating AI output as automatically correct.
+- **Reviewer-assisted scorecards:** Sales, General Office, and Retention criteria are based on the provided scorecard framework. Reviewers can assess criteria and attach transcript evidence. Results are provisional until calibration and human review requirements are met.
+- **Review prompts:** The interface highlights possible concerns and follow-up areas, with the understanding that these are suggestions—not approved coaching decisions.
+
+## Tech stack and architecture
+
+| Part | Technology | Reason for choosing it |
+| --- | --- | --- |
+| Web app | Next.js, React, TypeScript, Tailwind CSS | Familiar stack for building a responsive application quickly |
+| Authentication and database | Supabase Auth and PostgreSQL | Manage users, calls, analysis, and review data together |
+| Audio storage | Supabase private Storage | Avoid exposing recordings through public URLs |
+| Background processing | Supabase Edge Functions and database queue | Keep AI work separate from the upload request |
+| AI | Google Gemini | Transcription and structured call analysis |
+| Scoring | TypeScript rules and reviewer worksheet | Keep scoring consistent and allow human verification |
+| Hosting | Vercel for the web app; Supabase for backend services | Straightforward deployment for an MVP |
+
+**High-level flow:**
+
+`Sign in → Upload MP3 → Private Storage → Processing queue / Edge Function → Gemini → Saved transcript and extracted details → Human review and provisional scorecard`
+
+I separated uploading, AI processing, and scoring so that each part can be tested and improved independently. I also chose to keep AI suggestions separate from final scoring: a model can help identify possible evidence, but it should not automatically give an employee a final grade based on uncertain speaker attribution or incomplete analysis.
 
 ## Local setup
 
-Requirements: Node.js 22.13+, 24.x, or 26+, npm 12.2.1, Supabase CLI, and Docker Desktop.
+**Requirements:** Node.js 22.13+ (or a supported 24.x/26.x version), npm, Docker Desktop, and Supabase CLI.
 
-1. Start the local Supabase stack and apply migrations to that stack only:
+1. Clone the repository and install dependencies:
 
-   ```powershell
+   ```bash
+   git clone https://github.com/gippo05/pestlaunch-call-intelligence.git
+   cd pestlaunch-call-intelligence
+   npm ci
+   ```
+
+2. Start local Supabase and apply the project migrations:
+
+   ```bash
    supabase start
    supabase migration up --local --yes
    ```
 
-2. Copy `.env.example` to `.env.local`. Set the Supabase URL to `http://127.0.0.1:54321`, then use the publishable and secret keys reported by `supabase status -o env`. Keep the secret key server-only. Do not copy production credentials into a local file.
-3. Install and start the app:
+3. Copy `.env.example` to `.env.local` and fill in the **local** Supabase URL and keys shown by `supabase status -o env`. The main settings are:
 
-   ```powershell
-   npm ci
+   ```dotenv
+   NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<local-publishable-key>
+   SUPABASE_SECRET_KEY=<local-secret-key>
+   M3_PROCESSING_ENABLED=false
+   M3_SYNTHETIC_ONLY=true
+   M3_WORKER_AUTH_SECRET=<private-worker-secret-if-enabling-processing>
+   ```
+
+   Keep secrets out of Git and never put a server secret in a `NEXT_PUBLIC_` variable.
+
+4. Start the application:
+
+   ```bash
    npm run dev
    ```
 
-Open [http://localhost:3000](http://localhost:3000). There is no public registration flow. A local workspace owner must provision an Auth user and add that user to `workspace_members` before protected pages or upload are available.
+   Open `http://localhost:3000`.
 
-The `.env.example` defaults `M3_PROCESSING_ENABLED=false`. Upload finalization still verifies and stores the exact private MP3. With M3 disabled, the call remains queued and no Gemini request is made. The local-only helper `scripts/setup-m3-local.ps1` also leaves processing disabled by default. Its `-EnablePaidGemini` switch is an explicit local runtime opt-in; it does not make a provider request itself. On October 30, one explicitly authorized local Gemini run processed call `bf024624-1147-421f-81b7-53e9e4bd674b`; that single-run approval is consumed. The temporary enabled Edge session has been stopped. No further provider request is authorized by that approval.
+5. Provision a Supabase Auth user and workspace membership. Public sign-up is intentionally disabled, so an authorized owner must create reviewer access.
 
-For local Edge testing, `scripts/serve-m3-local.ps1` reads only an allowlist from the Git-ignored root `.env`, maps `GEMINI_API_KEY` to `M3_GEMINI_API_KEY`, and supplies `gemini-3.8-flash`. Its default keeps processing disabled; its startup log reports only secret presence, never a key value. The one approved run reached Gemini, saved its transcript and unreviewed outcome/fact/concern candidates, and completed its one-attempt job. The local worker is stopped after that run. If an enabled worker has no key or model, it fails closed as `provider_not_configured`.
+**AI processing:** Local processing is disabled by default. To test the full AI pipeline, the M3 Edge Function, trusted worker authentication, and Gemini credentials/model must also be configured explicitly. Simply starting Next.js and Supabase does **not** enable transcription. The project intentionally does not include working API keys.
 
-## Integrated workflow
+**Checks:**
 
-1. An authenticated reviewer uploads an MP3 directly from the browser to the private Storage bucket. The server checks the upload lease, MIME type, size, and MP3 signature before finalizing the call record.
-2. When local M3 processing is explicitly enabled, the server hashes the verified private bytes and asks a service-role-only database function to authorize only an exact registry match. New demo jobs are capped at one attempt.
-3. The server sends a short-timeout HMAC request to the local Supabase worker, signed for the exact call ID. An optional, disabled-by-default `M3_HOSTED_SYNTHETIC_DISPATCH_ENABLED=true` additionally permits the exact PestLaunch Test hosted URL only, retaining synthetic-only/verified-hash one-attempt authorization. Neither mode enables general real-customer processing. The worker re-downloads the object and verifies the registered digest before any Gemini call.
-4. Optional queue recovery: after deployment, an operator may explicitly configure a trusted scheduler to invoke `GET /api/internal/m3-synthetic-pump` with a protected `CRON_SECRET`. It scans a bounded list of pending synthetic jobs and triggers no more than one approved HMAC-targeted dispatch per invocation. The route is inert without the processing flags and correct Supabase project target. It is not scheduled by default and was not provider-tested in hosted infrastructure. Transcript, extracted facts and concerns, classification, and outcome are saved as unreviewed analysis candidates. Future processed calls also retain model-suggested speaker spans in private quality metadata. The M4 pre-assessment derives evidence-linked **potentially met** handling cues from these utterances without a second model call; the original saved Gemini call predates this change and has no speaker cues. The Calls page and call detail refresh for a bounded period while processing is queued or active.
-5. M4 stores an all-withheld AI candidate assessment bound to a saved M3 analysis. The suggested cues appear in the call detail and can prefill—but **cannot approve**—the criterion evidence. Workspace owners/reviewers use the **Reviewer-assisted QA worksheet** to mark each manual criterion, attach a verbatim transcript excerpt, affirm actual employee speaker attribution, and save a separate review draft. The worksheet shows coverage, confirmed draft points, and a provisional grade band only after the whole call and all applicable criteria are assessed. Four Sales objection-handling points are automatically credited only after whole-call review explicitly confirms no objection. This worksheet is not an official score, does not change the M3 analysis review status, and never bypasses rubric calibration.
-6. M5 shows exact-evidence-linked reviewer prompts from concern and outcome candidates. These prompts are explicitly provisional and do not attribute behavior to an employee. Official coaching remains gated on an approved human-reviewed scorecard.
-
-**Current limitation:** M4 does **not** automatically produce a complete numeric PestLaunch grade after upload. Automatic cues are partial model-sourced review suggestions; unknown or missing cues are not evidence of a failed criterion. A human-reviewed, complete rubric worksheet can produce a clearly labeled provisional band. Official grades require approved rubric calibration and validated source/speaker attribution. Audio playback remains unavailable until an authorized private-media read flow is configured. Files and database records are workspace scoped. Use synthetic fixtures only.
-
-## Verification commands
-
-```powershell
+```bash
 npm test
 npm run typecheck
 npm run lint
 npm run build
-supabase test db --local
 ```
 
-The SQL assertions under `supabase/tests/` are rollback-only. Keep local Vitest, local database, browser, CI, and hosted evidence separate in any handoff.
+## Known limitations
 
-## Release boundary
+- **Not a fully finished product.** The core call-review experience is implemented, but some of the more advanced coaching and product insights from the assessment are still limited.
+- **Scoring needs human review and calibration.** AI can suggest possible evidence, but official numeric grades are withheld until the rubric and evidence requirements are satisfied. A completed reviewer worksheet can show a clearly labeled provisional result.
+- **AI output needs verification.** Transcription, speaker labels, classification, and extracted details may be inaccurate, especially with noisy or overlapping speech.
+- **Processing reliability needs more testing.** Provider errors, timeouts, and queued or stalled jobs still need stronger production monitoring and recovery flows. The full hosted end-to-end flow should be verified against the final deployed revision.
+- **Audio playback is not yet part of the review experience.** Reviewers currently rely on saved transcript evidence.
+- **Synthetic recordings only were used for this assessment.** Real customer data handling, consent, retention, and production privacy controls would need a separate review before broader use.
 
-This repository state is prepared for local review. It does not authorize a linked/hosted migration, Edge Function deployment, Vercel deployment, hosted secret change, real customer recording, or another paid Gemini request. Those require a separate explicit decision and their own preflight, backup, and verification evidence. See [the MVP delivery checklist](docs/mvp-delivery-checklist.md) for release gates and the demo outline.
+## What I would do next
 
-## M6 submission preparation
+1. **Improve analysis and coaching:** Surface clearer missed opportunities, actionable recommendations, and priorities for business owners.
+2. **Calibrate the scoring system:** Validate rubrics with real reviewers and representative, authorized recordings before issuing official grades.
+3. **Improve reliability:** Add safe retries, better job monitoring, clearer error messages, and more end-to-end tests.
+4. **Improve the review experience:** Add authorized private audio playback, transcript navigation, and simpler ways to approve or correct AI suggestions.
+5. **Prepare for real customer use:** Review access controls, retention/deletion policies, consent requirements, and model-provider privacy terms.
 
-Before submission, attach the local test, browser, and production-build evidence, identify the exact repository revision and target projects, and complete the release gates in the checklist. Do not describe local database, browser, or worker evidence as hosted or production evidence. Keep Gemini disabled by default. The October 30 approval covered one synthetic call and has been consumed; any additional provider run needs a new explicit approval. Keep real customer recordings out of this MVP review.
+## Final note
+
+For this challenge, I prioritized a usable call-review workflow and a structure that can be improved in stages. Some areas are unfinished, and I have tried to be clear about those limitations rather than present the app as production-ready.
