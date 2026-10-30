@@ -298,8 +298,38 @@ async function processNextM3Job(
         ),
       );
       if (!completed) {
-        dependencies.log("job", "lease_lost", correlationId);
-        return response(200, { processed: 0, outcome: "lease_lost" });
+        // The completion RPC can reject a payload while the lease remains valid.
+        // Distinguish that validation rejection from an actual lost lease so the
+        // job does not remain stuck in Processing indefinitely.
+        let state: M3JobOutcome | null = null;
+        try {
+          state = await withTimeout(
+            () => dependencies.getJobOutcome(job.id),
+            remainingTimeout(deadline, stepTimeoutMs),
+          );
+        } catch {
+          dependencies.log("job", "completion_state_unknown", correlationId);
+          return response(200, { processed: 0, outcome: "completion_unknown" });
+        }
+        if (
+          state?.status === "leased" &&
+          state.attempt_owner === job.attempt_owner &&
+          state.lease_expires_at !== null &&
+          Date.parse(state.lease_expires_at) > Date.now()
+        ) {
+          const recorded = await failAndReconcile(
+            dependencies, job, "INTERNAL_ERROR", null,
+            remainingTimeout(deadline, stepTimeoutMs), correlationId,
+          );
+          dependencies.log("job", "completion_rejected_" + recorded, correlationId);
+          return response(200, { processed: 0, outcome: "completion_rejected" });
+        }
+        const reconciled = await reconcileCompletion(
+          dependencies, job.id, remainingTimeout(deadline, stepTimeoutMs), correlationId,
+        );
+        const outcome = reconciled === "review_required" ? "review_required" : "lease_lost";
+        dependencies.log("job", outcome, correlationId);
+        return response(200, { processed: outcome === "review_required" ? 1 : 0, outcome });
       }
       dependencies.log("job", "transcript_persisted", correlationId);
       return response(200, { processed: 1, outcome: "review_required" });
