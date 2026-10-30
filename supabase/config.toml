@@ -370,6 +370,11 @@ verify_jwt = false
 # M3 has an independent HMAC secret and is disabled unless both M3 gates are enabled.
 verify_jwt = false
 
+[functions.m4-ai-score]
+# Service-to-service only: withSupabase(auth="secret") authenticates the apikey.
+# The platform JWT check must be disabled for sb_secret_... API keys.
+verify_jwt = false
+
 [edge_runtime.secrets]
 # Local Edge Runtime mappings only. The existing root .env stores the Gemini
 # key as GEMINI_API_KEY; this alias avoids copying its value into another file.
