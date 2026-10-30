@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -20,7 +24,9 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     }
   },
   "include": [
@@ -29,7 +35,29 @@
     "**/*.tsx",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
-    "**/*.mts"
+    "**/*.mts",
+    ".next/m5-review-build-20261029-a1873e/types/**/*.ts",
+    ".next/m5-review-build-20261029-a1873e/dev/types/**/*.ts",
+    ".next/m5-review-build-final-20261029-a1873e/types/**/*.ts",
+    ".next/m5-review-build-final-20261029-a1873e/dev/types/**/*.ts",
+    "m5-review-build-20261029-a1873e/types/**/*.ts",
+    "m5-review-build-20261029-a1873e/dev/types/**/*.ts",
+    ".next/m5-review-bounded-final-20261029/types/**/*.ts",
+    ".next/m5-review-bounded-final-20261029/dev/types/**/*.ts",
+    ".next/m5-review-final-full-20261029/types/**/*.ts",
+    ".next/m5-review-final-full-20261029/dev/types/**/*.ts",
+    ".next/m5-review-final-check-20261029/types/**/*.ts",
+    ".next/m5-review-final-check-20261029/dev/types/**/*.ts",
+    ".next-m1m5-demo/types/**/*.ts",
+    ".next-m1m5-demo/dev/types/**/*.ts",
+    ".next/p0-ui-verify/types/**/*.ts",
+    ".next/p0-ui-verify/dev/types/**/*.ts",
+    ".next/p0-ui-verify2/types/**/*.ts",
+    ".next/p0-ui-verify2/dev/types/**/*.ts",
+    ".next-m3-fresh-e2e/types/**/*.ts",
+    ".next-m3-fresh-e2e/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }

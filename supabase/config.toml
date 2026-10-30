@@ -366,8 +366,21 @@ deno_version = 2
 # The handler verifies that worker secret itself; hosted activation remains gated.
 verify_jwt = false
 
-# [edge_runtime.secrets]
-# secret_key = "env(SECRET_VALUE)"
+[functions.m3-process-queue]
+# M3 has an independent HMAC secret and is disabled unless both M3 gates are enabled.
+verify_jwt = false
+
+[edge_runtime.secrets]
+# Local Edge Runtime mappings only. The existing root .env stores the Gemini
+# key as GEMINI_API_KEY; this alias avoids copying its value into another file.
+M3_GEMINI_API_KEY = "env(GEMINI_API_KEY)"
+M3_GEMINI_MODEL = "gemini-3.8-flash"
+M3_LOCAL_SUPABASE_COMPAT = "true"
+M3_LOCAL_PUBLISHABLE_KEY = "env(M3_LOCAL_PUBLISHABLE_KEY)"
+M3_LOCAL_SECRET_KEY = "env(M3_LOCAL_SECRET_KEY)"
+M3_PROCESSING_ENABLED = "env(M3_PROCESSING_ENABLED)"
+M3_SYNTHETIC_ONLY = "env(M3_SYNTHETIC_ONLY)"
+M3_WORKER_AUTH_SECRET = "env(M3_WORKER_AUTH_SECRET)"
 
 [analytics]
 enabled = true

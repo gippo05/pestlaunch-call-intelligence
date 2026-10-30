@@ -3,6 +3,8 @@ import {
   validateUploadIntent,
   type UploadBrand,
 } from "./upload-validation";
+import type { M3AutoProcessingState } from "./status";
+import type { M3AutoProcessingDiagnostic } from "./m3-auto-processing";
 
 const UPLOAD_ROLES = new Set(["owner", "reviewer"]);
 
@@ -44,12 +46,20 @@ export type UploadRepository = {
   beginUpload(intentId: string, userId: string): Promise<string | null>;
   downloadObject(objectPath: string): Promise<{ bytes: Uint8Array; contentType: string | null } | null>;
   finalizeCallUpload(intentId: string, userId: string, leaseToken: string | null): Promise<string | null>;
+  authorizeM3DemoCall(callId: string, audioSha256: string): Promise<"approved" | "already_authorized" | "not_allowlisted" | "not_eligible">;
+  authorizeM3PrivateCall?(callId: string, audioSha256: string): Promise<"approved" | "already_authorized" | "not_allowlisted" | "not_eligible">;
+};
+
+export type M2UploadServiceOptions = {
+  afterVerifiedUpload?: (callId: string, bytes: Uint8Array) => Promise<M3AutoProcessingState>;
+  onM3Diagnostic?: (event: M3AutoProcessingDiagnostic) => void;
 };
 
 export function createM2UploadService(
   repository: UploadRepository,
   createId: () => string = () => crypto.randomUUID(),
   getNow: () => Date = () => new Date(),
+  options: M2UploadServiceOptions = {},
 ) {
   return {
     async createIntent(actor: UploadActor | null, input: unknown) {
@@ -142,7 +152,7 @@ export function createM2UploadService(
       if (intent.status === "finalized") {
         const callId = await repository.finalizeCallUpload(intentId, actor.userId, null);
         if (!callId) throw new UploadServiceError("FINALIZATION_FAILED", 500);
-        return { callId };
+        return afterVerifiedUpload(repository, options, intent, callId);
       }
       if (intent.status !== "uploaded" && intent.status !== "uploading") {
         throw new UploadServiceError("UPLOAD_NOT_PREPARED", 409);
@@ -174,9 +184,61 @@ export function createM2UploadService(
         intent.status === "uploading" ? intent.upload_lease_token : null,
       );
       if (!callId) throw new UploadServiceError("FINALIZATION_FAILED", 500);
-      return { callId };
+      return afterVerifiedUpload(repository, options, intent, callId, stored.bytes);
     },
   };
+}
+
+async function afterVerifiedUpload(
+  repository: UploadRepository,
+  options: M2UploadServiceOptions,
+  intent: UploadIntentRow,
+  callId: string,
+  verifiedBytes?: Uint8Array,
+) {
+  if (!options.afterVerifiedUpload) return { callId };
+
+  let bytes = verifiedBytes;
+  if (!bytes) {
+    try {
+      if (intent.object_path !== expectedObjectPath(intent.workspace_id, intent.id)) {
+        reportM3Diagnostic(options, { stage: "source_verification", outcome: "failed", reason: "path_mismatch" });
+        return { callId, m3Processing: "unavailable" as const };
+      }
+      const stored = await repository.downloadObject(intent.object_path);
+      if (!stored) {
+        reportM3Diagnostic(options, { stage: "source_verification", outcome: "failed", reason: "object_unavailable" });
+        return { callId, m3Processing: "unavailable" as const };
+      }
+      if (
+        stored.contentType !== intent.mime_type ||
+        stored.bytes.byteLength !== intent.expected_size ||
+        !isMp3Signature(stored.bytes)
+      ) {
+        reportM3Diagnostic(options, { stage: "source_verification", outcome: "failed", reason: "object_invalid" });
+        return { callId, m3Processing: "unavailable" as const };
+      }
+      bytes = stored.bytes;
+    } catch {
+      reportM3Diagnostic(options, { stage: "source_verification", outcome: "failed", reason: "storage_download_failed" });
+      return { callId, m3Processing: "unavailable" as const };
+    }
+  }
+
+  try {
+    return { callId, m3Processing: await options.afterVerifiedUpload(callId, bytes) };
+  } catch {
+    reportM3Diagnostic(options, { stage: "dispatch", outcome: "hook_error" });
+    return { callId, m3Processing: "unavailable" as const };
+  }
+}
+
+function reportM3Diagnostic(options: M2UploadServiceOptions, event: M3AutoProcessingDiagnostic) {
+  try {
+    options.onM3Diagnostic?.(event);
+  } catch {
+    // Diagnostics must not alter upload finalization or M3 authorization.
+  }
 }
 
 function expectedObjectPath(workspaceId: string, intentId: string) {

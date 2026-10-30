@@ -5,6 +5,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createSupabaseUploadRepository } from "@/lib/calls/supabase-upload-repository";
 import { createM2UploadService, UploadServiceError, type UploadActor } from "@/lib/calls/upload-service";
+import { authorizeAndDispatchM3, type M3AutoProcessingDiagnostic } from "@/lib/calls/m3-auto-processing";
 
 const intentIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -18,7 +19,29 @@ export async function createUploadRequestContext() {
 
   const adminClient = createSupabaseAdminClient();
   const repository = createSupabaseUploadRepository(userClient, adminClient);
-  return { actor, service: createM2UploadService(repository) };
+  const onM3Diagnostic = (event: M3AutoProcessingDiagnostic) => {
+    console.warn(JSON.stringify({ component: "m3-auto-processing", ...event }));
+  };
+  const service = createM2UploadService(repository, undefined, undefined, {
+    onM3Diagnostic,
+    afterVerifiedUpload: (callId, bytes) => authorizeAndDispatchM3(callId, bytes, {
+      config: {
+        supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL,
+        publishableKey: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? process.env.SUPABASE_ANON_KEY,
+        workerSecret: process.env.M3_WORKER_AUTH_SECRET,
+        processingEnabled: process.env.M3_PROCESSING_ENABLED === "true",
+        syntheticOnly: process.env.M3_SYNTHETIC_ONLY === "true",
+        generalPrivateEnabled: process.env.M3_GENERAL_PRIVATE_ENABLED === "true",
+        hostedSyntheticEnabled: process.env.M3_HOSTED_SYNTHETIC_DISPATCH_ENABLED === "true",
+      },
+      authorize: process.env.M3_GENERAL_PRIVATE_ENABLED === "true" &&
+        process.env.M3_SYNTHETIC_ONLY !== "true" && repository.authorizeM3PrivateCall
+        ? repository.authorizeM3PrivateCall
+        : repository.authorizeM3DemoCall,
+      onDiagnostic: onM3Diagnostic,
+    }),
+  });
+  return { actor, service };
 }
 
 export function isSameOriginRequest(request: NextRequest) {

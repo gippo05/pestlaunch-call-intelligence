@@ -3,9 +3,11 @@
 import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUpFromLine, FileAudio, LoaderCircle } from "lucide-react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { uploadDirectToSupabaseStorage } from "@/lib/calls/direct-storage-upload";
 import { MAX_AUDIO_BYTES, type UploadBrand } from "@/lib/calls/upload-validation";
+import type { M3AutoProcessingState } from "@/lib/calls/status";
 
 type Phase = "idle" | "creating" | "uploading" | "finalizing" | "complete" | "error";
 
@@ -42,23 +44,29 @@ function messageFor(errorCode: string) {
 export function UploadCallForm() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const inFlightRef = useRef(false);
   const idempotencyKeyRef = useRef(crypto.randomUUID());
   const [file, setFile] = useState<File | null>(null);
   const [brand, setBrand] = useState<UploadBrand>("abc");
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [uploadedCallId, setUploadedCallId] = useState<string | null>(null);
+  const [m3Processing, setM3Processing] = useState<M3AutoProcessingState | null>(null);
 
   function selectFile(nextFile: File | null) {
     idempotencyKeyRef.current = crypto.randomUUID();
     setFile(nextFile);
     setProgress(0);
     setErrorMessage(null);
+    setUploadedCallId(null);
+    setM3Processing(null);
     setPhase("idle");
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (inFlightRef.current) return;
     setErrorMessage(null);
     if (!file) {
       setErrorMessage("Choose a synthetic MP3 recording first.");
@@ -76,6 +84,7 @@ export function UploadCallForm() {
       return;
     }
 
+    inFlightRef.current = true;
     try {
       setPhase("creating");
       const intentResponse = await fetch("/api/calls/upload-intents", {
@@ -112,7 +121,7 @@ export function UploadCallForm() {
           // A lost response can follow a successful Storage write. Finalization is the safe recovery check.
           const recovered = await finalizeIntent(intent.intentId).catch(() => null);
           if (recovered?.callId) {
-            finishUpload();
+            finishUpload(recovered.callId, recovered.m3Processing ?? null);
             return;
           }
           throw uploadError;
@@ -124,7 +133,7 @@ export function UploadCallForm() {
       setPhase("finalizing");
       const finalized = await finalizeIntent(intent.intentId);
       if (!finalized.callId) throw new Error(finalized.error ?? "INTERNAL_ERROR");
-      finishUpload();
+      finishUpload(finalized.callId, finalized.m3Processing ?? null);
     } catch (error) {
       setPhase("error");
       const code = error instanceof Error ? error.message : "INTERNAL_ERROR";
@@ -132,12 +141,16 @@ export function UploadCallForm() {
         idempotencyKeyRef.current = crypto.randomUUID();
       }
       setErrorMessage(messageFor(code));
+    } finally {
+      inFlightRef.current = false;
     }
   }
 
-  function finishUpload() {
+  function finishUpload(callId: string, processing: M3AutoProcessingState | null) {
     setPhase("complete");
     setProgress(100);
+    setUploadedCallId(callId);
+    setM3Processing(processing);
     setFile(null);
     if (inputRef.current) inputRef.current.value = "";
     idempotencyKeyRef.current = crypto.randomUUID();
@@ -154,9 +167,7 @@ export function UploadCallForm() {
         </span>
         <div>
           <h2 id="upload-call-title" className="text-base font-semibold text-ink">Add a synthetic call</h2>
-          <p className="mt-1 text-sm leading-6 text-muted">
-            Upload an MP3 assessment fixture. Files stay private; transcription and scoring are not enabled in M2.
-          </p>
+          <p className="mt-1 text-sm leading-6 text-muted">Upload a synthetic MP3 assessment fixture. Files stay private. Automatic M3 processing is considered only for exact fixture hashes in the local demo registry.</p>
         </div>
       </div>
 
@@ -176,7 +187,7 @@ export function UploadCallForm() {
                     setBrand(option);
                     idempotencyKeyRef.current = crypto.randomUUID();
                   }}
-                  className="accent-amber-800"
+                  className="accent-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700"
                 />
                 {option === "abc" ? "ABC" : "Noble Sales"}
               </label>
@@ -195,7 +206,7 @@ export function UploadCallForm() {
             disabled={busy}
             aria-describedby="call-audio-help"
             onChange={(event) => selectFile(event.currentTarget.files?.[0] ?? null)}
-            className="block min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink file:mr-3 file:rounded-md file:border-0 file:bg-stone-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700"
+            className="block min-h-11 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink file:mr-3 file:rounded-md file:border-0 file:bg-stone-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700"
           />
           <p id="call-audio-help" className="text-xs leading-5 text-muted">MP3 only · Maximum 50 MiB · Synthetic recordings only</p>
         </div>
@@ -220,7 +231,7 @@ export function UploadCallForm() {
               aria-valuemax={100}
               aria-valuenow={progress}
             >
-              <div className="h-full rounded-full bg-amber-700 transition-[width]" style={{ width: `${progress}%` }} />
+              <div className="h-full rounded-full bg-blue-700 transition-[width]" style={{ width: `${progress}%` }} />
             </div>
           </div>
         )}
@@ -228,7 +239,8 @@ export function UploadCallForm() {
         {errorMessage && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900" role="alert">{errorMessage}</p>}
         {phase === "complete" && (
           <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900" role="status">
-            The recording is stored privately and queued for M3. No transcript or score was created.
+            {processingMessage(m3Processing)}
+            {uploadedCallId && <Link href={`/calls/${uploadedCallId}`} className="ml-1 font-semibold underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700">Open call record</Link>}
           </p>
         )}
 
@@ -246,11 +258,30 @@ export function UploadCallForm() {
   );
 }
 
-async function finalizeIntent(intentId: string): Promise<{ callId?: string; error?: string }> {
+function processingMessage(status: M3AutoProcessingState | null) {
+  switch (status) {
+    case "started": return "The recording is private and the single authorized local M3 run has started. Its transcript and extracted fields remain review candidates.";
+    case "queued": return "The recording is private. The local M3 worker has no claimable job yet, so this call remains queued.";
+    case "not_allowlisted": return "The recording is private, but its exact audio hash is not in the synthetic demo registry. M3 was not authorized and the call remains queued.";
+    case "already_handled": return "The recording is private. M3 authorization was already handled; open the call record to check its current processing state.";
+    case "disabled": return "The recording is private. Automatic M3 processing is disabled in this local environment, so the call remains queued.";
+    case "provider_not_configured": return "The recording is private and its synthetic fixture is authorized, but the local worker has no Gemini provider configured. No AI request was made; the call remains queued.";
+    default: return "The recording was stored privately, but M3 dispatch could not be confirmed. Open the call record to inspect its current state. No transcript or score is assumed.";
+  }
+}
+
+async function finalizeIntent(intentId: string): Promise<{ callId?: string; error?: string; m3Processing?: M3AutoProcessingState }> {
   const response = await fetch(`/api/calls/upload-intents/${encodeURIComponent(intentId)}/finalize`, { method: "POST" });
   const result = await readJson(response);
   if (!response.ok) return { error: typeof result.error === "string" ? result.error : "INTERNAL_ERROR" };
-  return { callId: typeof result.callId === "string" ? result.callId : undefined };
+  return {
+    callId: typeof result.callId === "string" ? result.callId : undefined,
+    m3Processing: isM3AutoProcessingState(result.m3Processing) ? result.m3Processing : undefined,
+  };
+}
+
+function isM3AutoProcessingState(value: unknown): value is M3AutoProcessingState {
+  return value === "started" || value === "queued" || value === "not_allowlisted" || value === "already_handled" || value === "disabled" || value === "provider_not_configured" || value === "unavailable";
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {

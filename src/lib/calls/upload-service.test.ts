@@ -44,6 +44,7 @@ function makeRepository(overrides: Partial<UploadRepository> = {}) {
     beginUpload: vi.fn(async () => "50000000-0000-4000-8000-000000000001"),
     downloadObject: vi.fn(async () => null),
     finalizeCallUpload: vi.fn(async () => "60000000-0000-4000-8000-000000000001"),
+    authorizeM3DemoCall: vi.fn(async () => "approved" as const),
     ...overrides,
   };
   return repository;
@@ -180,6 +181,92 @@ describe("M2 upload service", () => {
 
     expect(result).toEqual({ callId: "60000000-0000-4000-8000-000000000001" });
     expect(repository.finalizeCallUpload).toHaveBeenCalledWith(intentId, actor.userId, leaseToken);
+  });
+
+  it("passes only verified private bytes to the optional automatic M3 handler", async () => {
+    vi.mocked(repository.getIntentForUser).mockResolvedValue(makeIntent({ status: "uploaded" }));
+    vi.mocked(repository.downloadObject).mockResolvedValue({ bytes: audioBytes, contentType: "audio/mpeg" });
+    const afterVerifiedUpload = vi.fn(async () => "started" as const);
+    const serviceWithM3 = createM2UploadService(
+      repository,
+      () => intentId,
+      () => new Date("2026-10-27T00:00:00.000Z"),
+      { afterVerifiedUpload },
+    );
+
+    const result = await serviceWithM3.finalize(actor, intentId);
+
+    expect(afterVerifiedUpload).toHaveBeenCalledOnce();
+    expect(afterVerifiedUpload).toHaveBeenCalledWith("60000000-0000-4000-8000-000000000001", audioBytes);
+    expect(result).toEqual({
+      callId: "60000000-0000-4000-8000-000000000001",
+      m3Processing: "started",
+    });
+  });
+
+  it("keeps M2 upload finalization successful if automatic M3 dispatch fails", async () => {
+    vi.mocked(repository.getIntentForUser).mockResolvedValue(makeIntent({ status: "uploaded" }));
+    vi.mocked(repository.downloadObject).mockResolvedValue({ bytes: audioBytes, contentType: "audio/mpeg" });
+    const serviceWithM3 = createM2UploadService(repository, undefined, undefined, {
+      afterVerifiedUpload: vi.fn(async () => { throw new Error("worker unavailable"); }),
+    });
+
+    const result = await serviceWithM3.finalize(actor, intentId);
+
+    expect(result).toEqual({
+      callId: "60000000-0000-4000-8000-000000000001",
+      m3Processing: "unavailable",
+    });
+    expect(repository.finalizeCallUpload).toHaveBeenCalledOnce();
+  });
+
+  it("re-verifies private bytes before retrying M3 dispatch for an idempotent finalization", async () => {
+    vi.mocked(repository.getIntentForUser).mockResolvedValue(makeIntent({ status: "finalized" }));
+    vi.mocked(repository.downloadObject).mockResolvedValue({ bytes: audioBytes, contentType: "audio/mpeg" });
+    const afterVerifiedUpload = vi.fn(async () => "already_handled" as const);
+    const serviceWithM3 = createM2UploadService(repository, undefined, undefined, { afterVerifiedUpload });
+
+    await expect(serviceWithM3.finalize(actor, intentId)).resolves.toEqual({
+      callId: "60000000-0000-4000-8000-000000000001",
+      m3Processing: "already_handled",
+    });
+    expect(repository.downloadObject).toHaveBeenCalledWith(objectPath);
+    expect(afterVerifiedUpload).toHaveBeenCalledWith("60000000-0000-4000-8000-000000000001", audioBytes);
+  });
+
+  it("does not send unverified bytes to M3 when a finalized object's content changed", async () => {
+    vi.mocked(repository.getIntentForUser).mockResolvedValue(makeIntent({ status: "finalized" }));
+    vi.mocked(repository.downloadObject).mockResolvedValue({ bytes: new Uint8Array([1, 2, 3]), contentType: "audio/mpeg" });
+    const afterVerifiedUpload = vi.fn(async () => "started" as const);
+    const serviceWithM3 = createM2UploadService(repository, undefined, undefined, { afterVerifiedUpload });
+
+    await expect(serviceWithM3.finalize(actor, intentId)).resolves.toEqual({
+      callId: "60000000-0000-4000-8000-000000000001",
+      m3Processing: "unavailable",
+    });
+    expect(afterVerifiedUpload).not.toHaveBeenCalled();
+  });
+
+  it("reports a safe source verification reason when an idempotent M3 redrive cannot read private audio", async () => {
+    vi.mocked(repository.getIntentForUser).mockResolvedValue(makeIntent({ status: "finalized" }));
+    vi.mocked(repository.downloadObject).mockRejectedValue(new Error("private storage detail"));
+    const afterVerifiedUpload = vi.fn(async () => "started" as const);
+    const onM3Diagnostic = vi.fn();
+    const options = Object.assign({ afterVerifiedUpload }, { onM3Diagnostic });
+    const serviceWithM3 = createM2UploadService(repository, undefined, undefined, options);
+
+    await expect(serviceWithM3.finalize(actor, intentId)).resolves.toEqual({
+      callId: "60000000-0000-4000-8000-000000000001",
+      m3Processing: "unavailable",
+    });
+
+    expect(onM3Diagnostic).toHaveBeenCalledWith({
+      stage: "source_verification",
+      outcome: "failed",
+      reason: "storage_download_failed",
+    });
+    expect(JSON.stringify(onM3Diagnostic.mock.calls)).not.toContain("private storage detail");
+    expect(afterVerifiedUpload).not.toHaveBeenCalled();
   });
 
   it("does not finalize an upload after its lease expires", async () => {
